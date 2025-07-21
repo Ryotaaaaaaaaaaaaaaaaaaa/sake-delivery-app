@@ -18,8 +18,7 @@ if 'route_text' not in st.session_state:
     st.session_state.route_text = None
 
 # --- Google APIキーの設定 ---
-API_KEY = st.sidebar.text_input("Google Maps APIキー", type="password")
-
+API_KEY = st.secrets["Maps_API_KEY"]
 # --- 1. ファイルアップロード機能 ---
 st.header("1. 顧客リストをアップロード")
 uploaded_file = st.file_uploader(
@@ -45,7 +44,7 @@ if uploaded_file is not None:
                 selected_customers.append(customer)
         
         st.header("3. ルートを計算")
-        start_address = st.text_input("出発地の住所", "京都市中京区寺町通御池上る上本能寺前町488番地")
+        start_address = st.text_input("出発地の住所", "京都府京都市左京区田中野神町６−１７")
         
         # フォーム内のボタン
         submit_button = st.form_submit_button(label="最適ルートを計算する")
