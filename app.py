@@ -5,6 +5,7 @@ import folium
 from streamlit_folium import st_folium
 from googlemaps import convert
 import datetime
+import urllib.parse
 
 # --- アプリの基本設定 ---
 st.set_page_config(page_title="最適配達ルート計算アプリ", layout="wide")
@@ -15,9 +16,10 @@ if 'map_figure' not in st.session_state:
     st.session_state.map_figure = None
 if 'route_text' not in st.session_state:
     st.session_state.route_text = None
+if 'Maps_url' not in st.session_state:
+    st.session_state.Maps_url = None
 
 # --- APIキーの設定 ---
-# Streamlitのシークレット管理を使うか、サイドバーで入力
 try:
     API_KEY = st.secrets["Maps_API_KEY"]
 except (FileNotFoundError, KeyError):
@@ -31,7 +33,6 @@ uploaded_file = st.file_uploader(
 )
 
 if uploaded_file is not None:
-    # --- 顧客選択とルート計算フォーム ---
     try:
         df = pd.read_csv(uploaded_file, encoding='utf-8-sig')
     except Exception as e:
@@ -50,7 +51,6 @@ if uploaded_file is not None:
         
         submit_button = st.form_submit_button(label="最適ルートを計算する")
 
-    # --- ボタンが押された時の処理 ---
     if submit_button:
         if not API_KEY:
             st.warning("APIキーを入力してください。")
@@ -81,52 +81,61 @@ if uploaded_file is not None:
                         st.success("ルート計算が完了しました！")
                         
                         m = folium.Map(location=start_coords, zoom_start=12)
-
-                        # 道路に沿ったルートを描画
                         encoded_polyline = directions_result[0]['overview_polyline']['points']
                         decoded_points = convert.decode_polyline(encoded_polyline)
                         route_path = [(p['lat'], p['lng']) for p in decoded_points]
                         folium.PolyLine(locations=route_path, color='blue', weight=5, opacity=0.7).add_to(m)
 
-                        # 最適化された訪問順序を取得
                         optimized_order = directions_result[0]['waypoint_order']
                         
-                        # 出発点のマーカーを追加
                         folium.Marker(location=start_coords, popup='<b>出発点</b>', icon=folium.Icon(color='red', icon='home')).add_to(m)
                         
-                        # ★★★ 各顧客のマーカー（ピン）を追加する処理 ★★★
                         route_text_list = ["出発点"]
+                        # ★★★ GoogleマップURL用の経由地リストを作成 ★★★
+                        waypoints_for_url = []
                         for i, idx in enumerate(optimized_order):
                             customer = df_selected.iloc[idx]
-                            # ピンを追加
                             folium.Marker(
                                 location=customer['coords_tuple'],
                                 popup=f"<b>{i+1}. {customer['name']}</b><br>{customer['address']}",
                                 icon=folium.Icon(color='blue', icon='info-sign')
                             ).add_to(m)
-                            # 訪問順のテキストリストに追加
                             route_text_list.append(f"**{i+1}. {customer['name']}**")
+                            # 経由地の座標をリストに追加
+                            waypoints_for_url.append(f"{customer['coords_tuple'][0]},{customer['coords_tuple'][1]}")
                         
                         route_text_list.append("帰着")
+                        
+                        # ★★★ GoogleマップのURLを生成 ★★★
+                        base_url = "https://www.google.com/maps/dir/?api=1"
+                        origin_param = f"&origin={start_coords[0]},{start_coords[1]}"
+                        destination_param = f"&destination={start_coords[0]},{start_coords[1]}"
+                        waypoints_param = "&waypoints=" + "|".join(waypoints_for_url)
+                        Maps_url = base_url + origin_param + destination_param + waypoints_param
                         
                         # 計算結果をセッションに保存
                         st.session_state.route_text = " → ".join(route_text_list)
                         st.session_state.map_figure = m
+                        st.session_state.Maps_url = Maps_url
 
                     else:
                         st.error("ルートが見つかりませんでした。")
-                        st.session_state.route_text = None
-                        st.session_state.map_figure = None
+                        st.session_state.Maps_url = None
 
                 except Exception as e:
                     st.error(f"エラーが発生しました: {e}")
-                    st.session_state.route_text = None
-                    st.session_state.map_figure = None
+                    st.session_state.Maps_url = None
 
 # --- セッションに保存された結果を表示 ---
-if st.session_state.get('route_text') and st.session_state.get('map_figure'):
+if st.session_state.get('map_figure'):
     st.header("計算結果")
     st.subheader("最適な訪問順")
     st.markdown(st.session_state.route_text)
+    
+    # ★★★ Googleマップへのリンクを表示 ★★★
+    if st.session_state.get('Maps_url'):
+        st.markdown(f"### [🗺️ Googleマップでナビゲーションを開始する]({st.session_state.Maps_url})")
+        st.info("スマートフォンで上のリンクをタップすると、Googleマップアプリでルートが開きます。")
+
     st.subheader("ルートマップ")
     st_folium(st.session_state.map_figure, width=1200, height=600, returned_objects=[])
