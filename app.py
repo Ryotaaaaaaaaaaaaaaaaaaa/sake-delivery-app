@@ -11,15 +11,19 @@ st.set_page_config(page_title="最適配達ルート計算アプリ", layout="wi
 st.title("最適配達ルート計算アプリ 🚚")
 
 # --- セッション管理の初期化 ---
-# これにより、再実行しても計算結果が消えなくなります
 if 'map_figure' not in st.session_state:
     st.session_state.map_figure = None
 if 'route_text' not in st.session_state:
     st.session_state.route_text = None
 
-# --- Google APIキーの設定 ---
-API_KEY = st.secrets["Maps_API_KEY"]
-# --- 1. ファイルアップロード機能 ---
+# --- APIキーの設定 ---
+# Streamlitのシークレット管理を使うか、サイドバーで入力
+try:
+    API_KEY = st.secrets["Maps_API_KEY"]
+except (FileNotFoundError, KeyError):
+    API_KEY = st.sidebar.text_input("Google Maps APIキー", type="password")
+
+# --- ファイルアップロード機能 ---
 st.header("1. 顧客リストをアップロード")
 uploaded_file = st.file_uploader(
     "座標付きの顧客リスト（customers_with_coords.csv）を選択してください", 
@@ -27,17 +31,15 @@ uploaded_file = st.file_uploader(
 )
 
 if uploaded_file is not None:
-    # --- 2. 顧客選択機能 ---
-    st.header("2. 今日の配達先を選択")
-    
+    # --- 顧客選択とルート計算フォーム ---
     try:
         df = pd.read_csv(uploaded_file, encoding='utf-8-sig')
     except Exception as e:
         st.error(f"ファイルの読み込みに失敗しました: {e}")
         st.stop()
 
-    # 顧客リストのチェックボックスを作成
     with st.form(key='customer_selection_form'):
+        st.header("2. 今日の配達先を選択")
         selected_customers = []
         for customer in df['name'].tolist():
             if st.checkbox(customer, key=customer):
@@ -46,10 +48,9 @@ if uploaded_file is not None:
         st.header("3. ルートを計算")
         start_address = st.text_input("出発地の住所", "京都府京都市左京区田中野神町６−１７")
         
-        # フォーム内のボタン
         submit_button = st.form_submit_button(label="最適ルートを計算する")
 
-    # ボタンが押された時の処理
+    # --- ボタンが押された時の処理 ---
     if submit_button:
         if not API_KEY:
             st.warning("APIキーを入力してください。")
@@ -79,20 +80,33 @@ if uploaded_file is not None:
                     if directions_result:
                         st.success("ルート計算が完了しました！")
                         
-                        map_center = start_coords
-                        m = folium.Map(location=map_center, zoom_start=12)
+                        m = folium.Map(location=start_coords, zoom_start=12)
 
+                        # 道路に沿ったルートを描画
                         encoded_polyline = directions_result[0]['overview_polyline']['points']
                         decoded_points = convert.decode_polyline(encoded_polyline)
                         route_path = [(p['lat'], p['lng']) for p in decoded_points]
                         folium.PolyLine(locations=route_path, color='blue', weight=5, opacity=0.7).add_to(m)
 
+                        # 最適化された訪問順序を取得
                         optimized_order = directions_result[0]['waypoint_order']
                         
+                        # 出発点のマーカーを追加
+                        folium.Marker(location=start_coords, popup='<b>出発点</b>', icon=folium.Icon(color='red', icon='home')).add_to(m)
+                        
+                        # ★★★ 各顧客のマーカー（ピン）を追加する処理 ★★★
                         route_text_list = ["出発点"]
                         for i, idx in enumerate(optimized_order):
-                            customer_name = df_selected.iloc[idx]['name']
-                            route_text_list.append(f"**{i+1}. {customer_name}**")
+                            customer = df_selected.iloc[idx]
+                            # ピンを追加
+                            folium.Marker(
+                                location=customer['coords_tuple'],
+                                popup=f"<b>{i+1}. {customer['name']}</b><br>{customer['address']}",
+                                icon=folium.Icon(color='blue', icon='info-sign')
+                            ).add_to(m)
+                            # 訪問順のテキストリストに追加
+                            route_text_list.append(f"**{i+1}. {customer['name']}**")
+                        
                         route_text_list.append("帰着")
                         
                         # 計算結果をセッションに保存
@@ -110,8 +124,7 @@ if uploaded_file is not None:
                     st.session_state.map_figure = None
 
 # --- セッションに保存された結果を表示 ---
-# このブロックは、ボタンが押されていなくても、結果が保存されていれば毎回実行されます
-if st.session_state.route_text and st.session_state.map_figure:
+if st.session_state.get('route_text') and st.session_state.get('map_figure'):
     st.header("計算結果")
     st.subheader("最適な訪問順")
     st.markdown(st.session_state.route_text)
